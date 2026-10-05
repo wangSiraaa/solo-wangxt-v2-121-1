@@ -12,6 +12,8 @@ POST /api/experiments/{id}/evaluate                 仅计算，不落库
 POST /api/experiments/{id}/plans                    保存方案
 GET  /api/plans/{id}                                读方案（重新计算）
 GET  /api/plans/{id}/export?format=markdown|json    导出
+GET  /api/compare?plan_a=&plan_b=                   同一试验内两份方案对比
+GET  /api/compare/export?plan_a=&plan_b=&format=    对比摘要导出
 
 仅处理库中给定的离线试验数据，不连接任何现场装置。
 """
@@ -27,11 +29,12 @@ from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
+from .compare import build_comparison
 from .config import settings
 from .curve import prepare_curve
 from .database import get_session, init_db
 from .density import prepare_density
-from .exporters import build_markdown, to_json
+from .exporters import build_compare_markdown, build_markdown, to_compare_json, to_json
 from .models import Experiment, Plan
 from .planning import evaluate_plan
 from .schemas import ExperimentIn, ExperimentOut, PlanIn, PlanOut
@@ -309,5 +312,93 @@ async def export_plan(
             media_type="text/markdown; charset=utf-8",
             headers={
                 "Content-Disposition": 'attachment; filename="distillation_plan.md"'
+            },
+        )
+
+
+# ---- 方案对比（同一试验内的两份已保存方案）----
+def _plan_result(exp: Experiment, plan: Plan) -> tuple[dict, str]:
+    """优先使用保存时的结果快照；快照缺失则按当前试验数据重算并标注。"""
+    if plan.result_snapshot:
+        return plan.result_snapshot, "snapshot"
+    payload = PlanIn(
+        name=plan.name, basis=plan.basis, cuts=plan.cuts, loss_pct=plan.loss_pct
+    )
+    return _eval_experiment(exp, payload), "recomputed"
+
+
+async def _build_comparison(session, plan_a_id: int, plan_b_id: int) -> dict:
+    if plan_a_id == plan_b_id:
+        raise HTTPException(422, "对比需要选择两份不同的方案（plan_a 与 plan_b 相同）")
+    rows = (
+        await session.execute(
+            select(Plan)
+            .where(Plan.id.in_([plan_a_id, plan_b_id]))
+            .options(selectinload(Plan.experiment))
+        )
+    ).scalars().all()
+    by_id = {p.id: p for p in rows}
+    if plan_a_id not in by_id:
+        raise HTTPException(404, f"方案 #{plan_a_id} 不存在")
+    if plan_b_id not in by_id:
+        raise HTTPException(404, f"方案 #{plan_b_id} 不存在")
+    pa, pb = by_id[plan_a_id], by_id[plan_b_id]
+    if pa.experiment_id != pb.experiment_id:
+        raise HTTPException(
+            422,
+            detail={
+                "message": "不能把不同试验的方案直接对比："
+                "产率数字只在同一条蒸馏曲线上可以相减",
+                "plan_a_experiment_id": pa.experiment_id,
+                "plan_b_experiment_id": pb.experiment_id,
+            },
+        )
+    exp = pa.experiment
+    result_a, src_a = _plan_result(exp, pa)
+    result_b, src_b = _plan_result(exp, pb)
+    return build_comparison(
+        experiment={"id": exp.id, "name": exp.name, "sample_id": exp.sample_id},
+        plan_a={
+            "id": pa.id, "name": pa.name, "basis": pa.basis,
+            "loss_pct": pa.loss_pct, "cuts": pa.cuts,
+        },
+        plan_b={
+            "id": pb.id, "name": pb.name, "basis": pb.basis,
+            "loss_pct": pb.loss_pct, "cuts": pb.cuts,
+        },
+        result_a=result_a,
+        result_b=result_b,
+        source_a=src_a,
+        source_b=src_b,
+    )
+
+
+@app.get("/api/compare")
+async def compare_plans(plan_a: int = Query(...), plan_b: int = Query(...)) -> dict:
+    async for session in get_session():
+        return await _build_comparison(session, plan_a, plan_b)
+
+
+@app.get("/api/compare/export")
+async def export_compare(
+    plan_a: int,
+    plan_b: int,
+    format: Literal["markdown", "json"] = "markdown",
+) -> Response:
+    async for session in get_session():
+        cmp = await _build_comparison(session, plan_a, plan_b)
+        if format == "json":
+            return Response(
+                to_compare_json(cmp),
+                media_type="application/json",
+                headers={
+                    "Content-Disposition": 'attachment; filename="distillation_compare.json"'
+                },
+            )
+        return PlainTextResponse(
+            build_compare_markdown(cmp),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="distillation_compare.md"'
             },
         )

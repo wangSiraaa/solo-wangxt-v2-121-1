@@ -6,6 +6,10 @@ interface Props {
   sample: CurveSample;
   cuts: CutInput[];
   overlaps: Overlap[];
+  /** 方案对比模式：第二份方案的切点（深色点线绘制） */
+  cutsB?: CutInput[];
+  labelA?: string;
+  labelB?: string;
 }
 
 const W = 820;
@@ -15,17 +19,27 @@ const PALETTE = [
   "#2563eb", "#0891b2", "#16a34a", "#ca8a04",
   "#dc2626", "#9333ea", "#0d9488", "#ea580c",
 ];
+const PLAN_B_COLOR = "#111827";
 
-export default function CurveChart({ sample, cuts, overlaps }: Props) {
+function trunc(s: string | undefined, n = 14): string {
+  if (!s) return "";
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+export default function CurveChart({ sample, cuts, overlaps, cutsB, labelA, labelB }: Props) {
   const [dmin, dmax] = sample.range.temp_c;
 
   const { xMin, xMax } = useMemo(() => {
-    const ts = [...sample.temps_c, ...cuts.flatMap((c) => [c.start_temp_c, c.end_temp_c])];
+    const ts = [
+      ...sample.temps_c,
+      ...cuts.flatMap((c) => [c.start_temp_c, c.end_temp_c]),
+      ...(cutsB ?? []).flatMap((c) => [c.start_temp_c, c.end_temp_c]),
+    ];
     let lo = Math.min(...ts);
     let hi = Math.max(...ts);
     const pad = Math.max((hi - lo) * 0.06, 4);
     return { xMin: lo - pad, xMax: hi + pad };
-  }, [sample, cuts]);
+  }, [sample, cuts, cutsB]);
 
   const x = (t: number) => M.left + ((t - xMin) / (xMax - xMin)) * (W - M.left - M.right);
   const y = (r: number) => H - M.bottom - (r / 100) * (H - M.top - M.bottom);
@@ -47,7 +61,8 @@ export default function CurveChart({ sample, cuts, overlaps }: Props) {
   }, [xMin, xMax]);
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="累积蒸馏曲线与切点">
+    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img"
+      aria-label={cutsB ? "累积蒸馏曲线与两份方案的切点对比" : "累积蒸馏曲线与切点"}>
       <defs>
         <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width="8" height="8" fill="#f3f4f6" />
@@ -120,6 +135,37 @@ export default function CurveChart({ sample, cuts, overlaps }: Props) {
             height={H - M.top - M.bottom} fill="url(#ovhatch)" opacity={0.5} />
         );
       })}
+
+      {/* 方案B 切点（对比模式）：深色点线 + 第二行名称标签 */}
+      {cutsB && cutsB.map((c, i) => {
+        const lo = Math.max(Math.min(c.start_temp_c, c.end_temp_c), dmin);
+        const hi = Math.min(Math.max(c.start_temp_c, c.end_temp_c), dmax);
+        if (hi <= lo) return null;
+        return (
+          <g key={`b-${i}`}>
+            <line x1={x(c.start_temp_c)} x2={x(c.start_temp_c)} y1={M.top} y2={H - M.bottom}
+              stroke={PLAN_B_COLOR} strokeWidth={1.5} strokeDasharray="2 3" />
+            <line x1={x(c.end_temp_c)} x2={x(c.end_temp_c)} y1={M.top} y2={H - M.bottom}
+              stroke={PLAN_B_COLOR} strokeWidth={1.5} strokeDasharray="2 3" />
+            <text x={(x(lo) + x(hi)) / 2} y={M.top + 32} textAnchor="middle"
+              fontSize="11" fill={PLAN_B_COLOR} fontStyle="italic">
+              {c.name}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* 对比模式图例 */}
+      {cutsB && (
+        <g fontSize="11" fill="#374151">
+          <line x1={W - M.right - 320} y1={M.top + 6} x2={W - M.right - 292} y2={M.top + 6}
+            stroke={PALETTE[0]} strokeWidth={1.5} strokeDasharray="5 3" />
+          <text x={W - M.right - 286} y={M.top + 10}>A：{trunc(labelA)}</text>
+          <line x1={W - M.right - 160} y1={M.top + 6} x2={W - M.right - 132} y2={M.top + 6}
+            stroke={PLAN_B_COLOR} strokeWidth={1.5} strokeDasharray="2 3" />
+          <text x={W - M.right - 126} y={M.top + 10}>B：{trunc(labelB)}</text>
+        </g>
+      )}
 
       {/* PCHIP 曲线（仅实测范围内画）*/}
       <path d={path} fill="none" stroke="#1d4ed8" strokeWidth={2.5} />

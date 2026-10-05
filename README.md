@@ -60,6 +60,19 @@ PCHIP 插值方法、体积/质量换算依据、残渣密度假设、温度适�
 "范围外不外推、不存在的高温数据不做假设"声明、逐馏分产率、重叠/缺口明细与
 100% 平衡核对、全部数据提示。
 
+## 方案对比（教学用）
+
+同一试验下可选取**两份已保存方案**进行对比（`backend/app/compare.py`）：
+
+- 数值取自各方案**保存时的切点与结果快照**（快照缺失时按当前数据重算并标注）；
+- 馏分按名称对应，逐馏分列出体积/质量产率差值（Δ = B − A），切点有变化的
+  馏分自动定位（如只调整一个切点，可看到受影响的馏分及相邻重叠/缺口变化）；
+- 重叠、缺口、未回收量（残渣毛额/净额）与各自的数据提示**并排**返回；
+- **不跨试验、不跨计量基准相减**：两份方案必须属于同一试验（否则 422）；
+  体积%与质量%分别成列计算差值，保存口径（basis）不同时给出提示；
+- 前端在曲线图上同时标出两组切点（A 彩色虚线 / B 深色点线），并可导出
+  对比摘要（Markdown / JSON）。
+
 ## 运行
 
 ### 后端
@@ -89,7 +102,7 @@ npm run dev        # http://localhost:5173 ，/api 已代理到 8000
 ### 测试
 
 ```bash
-cd backend && python3 -m pytest -q   # 26 个用例：插值/密度/重叠/缺口/闭合/API
+cd backend && python3 -m pytest -q   # 34 个用例：插值/密度/重叠/缺口/闭合/对比/API
 cd web && npm run build              # tsc 类型检查 + 构建
 ```
 
@@ -103,5 +116,7 @@ cd web && npm run build              # tsc 类型检查 + 构建
 | POST | `/api/experiments/{id}/evaluate` | 按切点实时计算，不落库 |
 | POST | `/api/experiments/{id}/plans` | 保存方案（同时存结果快照） |
 | GET | `/api/plans/{id}/export?format=markdown\|json` | 导出 |
+| GET | `/api/compare?plan_a=&plan_b=` | 同一试验内两份方案对比（跨试验返回 422） |
+| GET | `/api/compare/export?plan_a=&plan_b=&format=` | 对比摘要导出（Markdown / JSON） |
 
 交互式文档：`http://localhost:8000/docs`。

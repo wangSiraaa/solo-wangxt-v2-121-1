@@ -147,3 +147,65 @@ export interface CurveSample {
   issues: Issue[];
   has_blocking_errors: boolean;
 }
+
+// ---- 方案对比 ----
+export interface PlanRef {
+  id: number;
+  name: string;
+  basis: "volume" | "mass";
+  loss_pct: number;
+  cuts: CutInput[];
+}
+
+export interface CompareFractionSide {
+  start_temp_c: number;
+  end_temp_c: number;
+  volume_yield_pct: number | null;
+  mass_yield_pct: number | null;
+  flags: string[];
+}
+
+export interface CompareFraction {
+  name: string;
+  in_a: boolean;
+  in_b: boolean;
+  a: CompareFractionSide | null;
+  b: CompareFractionSide | null;
+  delta_volume_pct: number | null;
+  delta_mass_pct: number | null;
+  interval_changed: boolean;
+  changed_endpoints: string[];
+  change_desc: string;
+}
+
+export interface CompareTotalsRow {
+  key: string;
+  label: string;
+  a: number | null;
+  b: number | null;
+  delta: number | null;
+}
+
+export interface PlanComparison {
+  experiment: { id: number; name: string; sample_id?: string | null };
+  plan_a: PlanRef;
+  plan_b: PlanRef;
+  result_source: { a: string; b: string };
+  notes: string[];
+  fractions: CompareFraction[];
+  changed_fraction_names: string[];
+  overlaps: { a: Overlap[]; b: Overlap[] };
+  gaps: { a: Gap[]; b: Gap[] };
+  totals: {
+    volume: CompareTotalsRow[];
+    mass: CompareTotalsRow[] | null;
+    identity_ok: { a: boolean | null; b: boolean | null };
+    mass_identity: {
+      a: { ok: boolean; note: string } | null;
+      b: { ok: boolean; note: string } | null;
+    } | null;
+  };
+  issues: { a: Issue[]; b: Issue[] };
+  applicable_range: EvalResult["applicable_range"];
+  method: Record<string, string>;
+}

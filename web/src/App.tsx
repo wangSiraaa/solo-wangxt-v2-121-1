@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, exportUrl } from "./api";
 import type {
-  CurveSample, EvalResult, Experiment, PlanInput,
+  CurveSample, EvalResult, Experiment, PlanComparison, PlanInput,
 } from "./types";
 import CurveChart from "./components/CurveChart";
 import CutEditor from "./components/CutEditor";
 import ResultsPanel from "./components/ResultsPanel";
 import IssuesPanel from "./components/IssuesPanel";
+import ComparePanel from "./components/ComparePanel";
 
 function defaultCuts(sample: CurveSample) {
   const [lo, hi] = sample.range.temp_c;
@@ -36,6 +37,13 @@ export default function App() {
   const [savedId, setSavedId] = useState<number | null>(null);
   const [seedMsg, setSeedMsg] = useState<string | null>(null);
 
+  // 方案对比
+  const [cmpA, setCmpA] = useState<number | null>(null);
+  const [cmpB, setCmpB] = useState<number | null>(null);
+  const [comparison, setComparison] = useState<PlanComparison | null>(null);
+  const [cmpError, setCmpError] = useState<string | null>(null);
+  const [cmpOverlay, setCmpOverlay] = useState(true);
+
   useEffect(() => {
     api.listExperiments()
       .then((list) => {
@@ -49,6 +57,8 @@ export default function App() {
     if (expId === null) return;
     setError(null);
     setResult(null);
+    setComparison(null);
+    setCmpError(null);
     Promise.all([api.getExperiment(expId), api.curveSample(expId)])
       .then(([exp, s]) => {
         setExperiment(exp);
@@ -66,9 +76,34 @@ export default function App() {
           setCuts(defaultCuts(s));
         }
         setSavedId(exp.plans && exp.plans.length ? exp.plans[0].id : null);
+        // 对比选择：默认选中前两份已保存方案（不足则留空待用户选择）
+        setCmpA(exp.plans && exp.plans.length ? exp.plans[0].id : null);
+        setCmpB(exp.plans && exp.plans.length > 1 ? exp.plans[1].id : null);
       })
       .catch((e) => setError(`加载试验失败：${e.message}`));
   }, [expId]);
+
+  // 两份方案都选定后请求对比（后端保证同试验、同基准相减）
+  useEffect(() => {
+    if (cmpA === null || cmpB === null || cmpA === cmpB) {
+      setComparison(null);
+      setCmpError(null);
+      return;
+    }
+    let cancelled = false;
+    api.comparePlans(cmpA, cmpB)
+      .then((c) => {
+        if (cancelled) return;
+        setComparison(c);
+        setCmpError(null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setComparison(null);
+        setCmpError(`对比失败：${(e as Error).message}`);
+      });
+    return () => { cancelled = true; };
+  }, [cmpA, cmpB]);
 
   const payload: PlanInput = useMemo(
     () => ({ name: planName, basis, loss_pct: Number.isFinite(lossPct) ? lossPct : 0, cuts }),
@@ -106,6 +141,9 @@ export default function App() {
       setResult(r.result);
       setSavedId(r.id);
       setError(null);
+      // 刷新已保存方案列表，使新方案可立即用于对比
+      const exp = await api.getExperiment(expId);
+      setExperiment(exp);
     } catch (e) {
       setError(`保存失败：${(e as Error).message}`);
     } finally {
@@ -124,6 +162,9 @@ export default function App() {
       setSeedMsg(`导入失败（库非空时需清空）：${(e as Error).message}`);
     }
   };
+
+  // 对比模式：曲线图切换为两份已保存方案的切点叠加
+  const compareView = comparison !== null && cmpOverlay;
 
   return (
     <div className="app">
@@ -168,7 +209,20 @@ export default function App() {
 
       {sample && result && (
         <>
-          <CurveChart sample={sample} cuts={cuts} overlaps={result.overlaps} />
+          <CurveChart
+            sample={sample}
+            cuts={compareView ? comparison.plan_a.cuts : cuts}
+            cutsB={compareView ? comparison.plan_b.cuts : undefined}
+            labelA={compareView ? comparison.plan_a.name : undefined}
+            labelB={compareView ? comparison.plan_b.name : undefined}
+            overlaps={compareView ? [] : result.overlaps}
+          />
+          {compareView && (
+            <p className="hint">
+              对比模式：曲线图显示方案A（彩色虚线）与方案B（深色点线）的已保存切点；
+              取消下方「在曲线图上同时标出两组切点」可回到当前编辑视图。
+            </p>
+          )}
           <IssuesPanel issues={result.issues} />
 
           <CutEditor
@@ -201,6 +255,18 @@ export default function App() {
               </span>
             )}
           </div>
+
+          <ComparePanel
+            plans={experiment?.plans ?? []}
+            planA={cmpA}
+            planB={cmpB}
+            comparison={comparison}
+            error={cmpError}
+            overlay={cmpOverlay}
+            onSelectA={setCmpA}
+            onSelectB={setCmpB}
+            onOverlayChange={setCmpOverlay}
+          />
         </>
       )}
     </div>
