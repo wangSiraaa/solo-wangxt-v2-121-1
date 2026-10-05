@@ -6,26 +6,40 @@ interface Props {
   sample: CurveSample;
   cuts: CutInput[];
   overlaps: Overlap[];
+  /** 对比模式：方案B 的切点（与 A 同属一次试验，可直接叠加在同一曲线上）。 */
+  cutsB?: CutInput[];
+  overlapsB?: Overlap[];
+  planNameA?: string;
+  planNameB?: string;
 }
 
 const W = 820;
 const H = 440;
-const M = { top: 24, right: 24, bottom: 52, left: 64 };
+const M = { top: 48, right: 24, bottom: 52, left: 64 };
 const PALETTE = [
   "#2563eb", "#0891b2", "#16a34a", "#ca8a04",
   "#dc2626", "#9333ea", "#0d9488", "#ea580c",
 ];
+// 对比组（方案B）统一使用橙红色系，与方案A 的多彩切点区分
+const B_COLOR = "#ea580c";
 
-export default function CurveChart({ sample, cuts, overlaps }: Props) {
+export default function CurveChart({
+  sample, cuts, overlaps, cutsB, overlapsB, planNameA, planNameB,
+}: Props) {
   const [dmin, dmax] = sample.range.temp_c;
+  const compare = !!cutsB;
 
   const { xMin, xMax } = useMemo(() => {
-    const ts = [...sample.temps_c, ...cuts.flatMap((c) => [c.start_temp_c, c.end_temp_c])];
+    const ts = [
+      ...sample.temps_c,
+      ...cuts.flatMap((c) => [c.start_temp_c, c.end_temp_c]),
+      ...(cutsB ?? []).flatMap((c) => [c.start_temp_c, c.end_temp_c]),
+    ];
     let lo = Math.min(...ts);
     let hi = Math.max(...ts);
     const pad = Math.max((hi - lo) * 0.06, 4);
     return { xMin: lo - pad, xMax: hi + pad };
-  }, [sample, cuts]);
+  }, [sample, cuts, cutsB]);
 
   const x = (t: number) => M.left + ((t - xMin) / (xMax - xMin)) * (W - M.left - M.right);
   const y = (r: number) => H - M.bottom - (r / 100) * (H - M.top - M.bottom);
@@ -56,7 +70,28 @@ export default function CurveChart({ sample, cuts, overlaps }: Props) {
         <pattern id="ovhatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line x1="0" y1="0" x2="0" y2="6" stroke="#dc2626" strokeWidth="2.5" />
         </pattern>
+        <pattern id="ovhatch-b" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+          <line x1="0" y1="0" x2="0" y2="6" stroke={B_COLOR} strokeWidth="2.5" />
+        </pattern>
       </defs>
+
+      {/* 对比图例 */}
+      {compare && (
+        <g className="chart-legend">
+          <rect x={W - M.right - 232} y={10} width={226} height={26} rx={5}
+            fill="#fff" stroke="#e5e7eb" />
+          <line x1={W - M.right - 218} y1={23} x2={W - M.right - 192} y2={23}
+            stroke="#2563eb" strokeWidth={2.5} strokeDasharray="5 3" />
+          <text x={W - M.right - 186} y={27} fontSize="11.5" fill="#374151">
+            A：{planNameA ?? "方案A"}
+          </text>
+          <line x1={W - M.right - 92} y1={23} x2={W - M.right - 66} y2={23}
+            stroke={B_COLOR} strokeWidth={2.5} strokeDasharray="9 3 2 3" />
+          <text x={W - M.right - 60} y={27} fontSize="11.5" fill="#374151">
+            B：{planNameB ?? "方案B"}
+          </text>
+        </g>
+      )}
 
       {/* 实测范围外：无数据·不外推 */}
       {xMin < dmin && (
@@ -89,35 +124,68 @@ export default function CurveChart({ sample, cuts, overlaps }: Props) {
         累积回收 体积%（进料基准）
       </text>
 
-      {/* 馏分色带 */}
+      {/* 方案A 馏分色带 */}
       {cuts.map((c, i) => {
         const lo = Math.max(Math.min(c.start_temp_c, c.end_temp_c), dmin);
         const hi = Math.min(Math.max(c.start_temp_c, c.end_temp_c), dmax);
         if (hi <= lo) return null;
         const color = PALETTE[i % PALETTE.length];
         return (
-          <g key={i}>
+          <g key={`a-${i}`}>
             <rect x={x(lo)} y={M.top} width={Math.max(x(hi) - x(lo), 1)}
-              height={H - M.top - M.bottom} fill={color} opacity={0.08} />
+              height={H - M.top - M.bottom} fill={color} opacity={compare ? 0.05 : 0.08} />
             <line x1={x(c.start_temp_c)} x2={x(c.start_temp_c)} y1={M.top} y2={H - M.bottom}
-              stroke={color} strokeWidth={1.5} strokeDasharray="5 3" />
+              stroke={color} strokeWidth={compare ? 2 : 1.5} strokeDasharray="5 3" />
             <line x1={x(c.end_temp_c)} x2={x(c.end_temp_c)} y1={M.top} y2={H - M.bottom}
-              stroke={color} strokeWidth={1.5} strokeDasharray="5 3" />
-            <text x={(x(lo) + x(hi)) / 2} y={M.top + 14} textAnchor="middle"
+              stroke={color} strokeWidth={compare ? 2 : 1.5} strokeDasharray="5 3" />
+            <text x={(x(lo) + x(hi)) / 2} y={compare ? M.top - 16 : M.top + 14} textAnchor="middle"
               fontSize="11" fill={color} fontWeight="600">
-              {c.name}
+              {compare ? `A·${c.name}` : c.name}
             </text>
           </g>
         );
       })}
 
-      {/* 重叠区红色斜线 */}
+      {/* 方案B 馏分（对比模式）：橙色描边色带 + 点划线切点，名称排在第二行 */}
+      {compare && (cutsB ?? []).map((c, i) => {
+        const lo = Math.max(Math.min(c.start_temp_c, c.end_temp_c), dmin);
+        const hi = Math.min(Math.max(c.start_temp_c, c.end_temp_c), dmax);
+        const band = hi > lo;
+        return (
+          <g key={`b-${i}`}>
+            {band && (
+              <rect x={x(lo)} y={M.top} width={Math.max(x(hi) - x(lo), 1)}
+                height={H - M.top - M.bottom} fill={B_COLOR} opacity={0.05} />
+            )}
+            <line x1={x(c.start_temp_c)} x2={x(c.start_temp_c)} y1={M.top - 4} y2={H - M.bottom}
+              stroke={B_COLOR} strokeWidth={2} strokeDasharray="9 3 2 3" />
+            <line x1={x(c.end_temp_c)} x2={x(c.end_temp_c)} y1={M.top - 4} y2={H - M.bottom}
+              stroke={B_COLOR} strokeWidth={2} strokeDasharray="9 3 2 3" />
+            {band && (
+              <text x={(x(lo) + x(hi)) / 2} y={M.top - 2} textAnchor="middle"
+                fontSize="11" fill={B_COLOR} fontWeight="600">
+                B·{c.name}
+              </text>
+            )}
+          </g>
+        );
+      })}
+
+      {/* 重叠区斜线：A 红 / B 橙 */}
       {overlaps.filter((o) => !o.fully_outside_range).map((o, i) => {
         const lo = Math.max(o.from_temp_c, dmin);
         const hi = Math.min(o.to_temp_c, dmax);
         return (
-          <rect key={i} x={x(lo)} y={M.top} width={Math.max(x(hi) - x(lo), 1)}
+          <rect key={`ova-${i}`} x={x(lo)} y={M.top} width={Math.max(x(hi) - x(lo), 1)}
             height={H - M.top - M.bottom} fill="url(#ovhatch)" opacity={0.5} />
+        );
+      })}
+      {compare && (overlapsB ?? []).filter((o) => !o.fully_outside_range).map((o, i) => {
+        const lo = Math.max(o.from_temp_c, dmin);
+        const hi = Math.min(o.to_temp_c, dmax);
+        return (
+          <rect key={`ovb-${i}`} x={x(lo)} y={M.top} width={Math.max(x(hi) - x(lo), 1)}
+            height={H - M.top - M.bottom} fill="url(#ovhatch-b)" opacity={0.45} />
         );
       })}
 

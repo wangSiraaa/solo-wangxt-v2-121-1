@@ -7,6 +7,7 @@ import CurveChart from "./components/CurveChart";
 import CutEditor from "./components/CutEditor";
 import ResultsPanel from "./components/ResultsPanel";
 import IssuesPanel from "./components/IssuesPanel";
+import CompareSection from "./components/CompareSection";
 
 function defaultCuts(sample: CurveSample) {
   const [lo, hi] = sample.range.temp_c;
@@ -34,6 +35,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<number | null>(null);
+  const [savedPlans, setSavedPlans] = useState<Experiment["plans"]>([]);
   const [seedMsg, setSeedMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -66,6 +68,7 @@ export default function App() {
           setCuts(defaultCuts(s));
         }
         setSavedId(exp.plans && exp.plans.length ? exp.plans[0].id : null);
+        setSavedPlans(exp.plans ?? []);
       })
       .catch((e) => setError(`加载试验失败：${e.message}`));
   }, [expId]);
@@ -106,6 +109,10 @@ export default function App() {
       setResult(r.result);
       setSavedId(r.id);
       setError(null);
+      // 刷新已保存方案列表，供两方案对比选择
+      const fresh = await api.getExperiment(expId);
+      setExperiment(fresh);
+      setSavedPlans(fresh.plans ?? []);
     } catch (e) {
       setError(`保存失败：${(e as Error).message}`);
     } finally {
@@ -202,6 +209,19 @@ export default function App() {
             )}
           </div>
         </>
+      )}
+
+      {sample && savedPlans && savedPlans.length >= 2 && (
+        <CompareSection expId={expId as number} plans={savedPlans} sample={sample} />
+      )}
+      {sample && savedPlans && savedPlans.length < 2 && (
+        <div className="compare-section placeholder">
+          <h2>两方案对比</h2>
+          <p className="hint">
+            当前试验已保存 {savedPlans.length} 份方案。保存至少两份不同切点的方案后，
+            即可在此同时叠加两组切点、查看产率差值并导出对比摘要。
+          </p>
+        </div>
       )}
     </div>
   );

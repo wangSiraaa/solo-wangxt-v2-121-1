@@ -160,3 +160,226 @@ def to_json(exp: dict, plan: dict, result: dict) -> str:
     return json.dumps(
         build_json_payload(exp, plan, result), ensure_ascii=False, indent=2, allow_nan=False
     )
+
+
+# ---- 两份已保存方案对比导出 ----
+def _cfmt(v, nd: int = 2) -> str:
+    """对比表用的简短缺数显示（区别于单方案导出的'数据不足'长文本）。"""
+    if v is None:
+        return "—"
+    return f"{v:.{nd}f}"
+
+
+def _cmp_delta(v, nd: int = 2) -> str:
+    if v is None:
+        return "—"
+    if abs(v) <= 5e-5:
+        return f"0.00（无变化）"
+    return f"{v:+.{nd}f}"
+
+
+def _cmp_temp_delta(v) -> str:
+    if v is None:
+        return ""
+    if abs(v) <= 1e-6:
+        return "0"
+    return f"{v:+g}"
+
+
+def _cmp_flags(flags: list[str]) -> str:
+    return "、".join(_FLAG_ZH.get(f, f) for f in (flags or []))
+
+
+def build_comparison_markdown(exp: dict, cmp: dict) -> str:
+    """同试验两方案对比摘要：逐馏分并列+差值、重叠/缺口/未回收并排、双方提示。"""
+    pa, pb = cmp["plans"]["a"], cmp["plans"]["b"]
+    basis_name = {"volume": "体积%", "mass": "质量%"}
+    lines: list[str] = []
+    lines.append(f"# 切割方案对比摘要：{pa['name']}（A） vs {pb['name']}（B）")
+    lines.append("")
+    lines.append(f"- 试验：{exp['name']}"
+                 + (f"（样品 {exp['sample_id']}）" if exp.get("sample_id") else ""))
+    lines.append(f"- 导出时间（UTC）：{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S}")
+    lines.append(
+        f"- 方案A：#{pa['id']} {pa['name']}，保存口径 {basis_name.get(pa['basis'], pa['basis'])}"
+        + ("，结果为重算" if pa.get("snapshot_recomputed") else "，使用保存时结果快照")
+    )
+    lines.append(
+        f"- 方案B：#{pb['id']} {pb['name']}，保存口径 {basis_name.get(pb['basis'], pb['basis'])}"
+        + ("，结果为重算" if pb.get("snapshot_recomputed") else "，使用保存时结果快照")
+    )
+    rng = cmp.get("applicable_range") or {}
+    if rng.get("temp_c"):
+        lines.append(
+            f"- 同一试验、同一曲线（{rng['temp_c'][0]:g}~{rng['temp_c'][1]:g} ℃）"
+            "与同一套密度/进料数据"
+        )
+    lines.append("")
+
+    lines.append("## 1. 对比口径声明")
+    lines.append("- 差值一律为 **方案B − 方案A**；两份方案来自**同一次离线试验**。")
+    lines.append(
+        "- 体积产率差值只在**体积基准内**相减，质量产率差值只在**质量基准内**相减；"
+        "体积%与质量%是两套计量基准，**不跨基准相减**。"
+    )
+    lines.append(
+        "- 切点超出实测温度范围的部分按各自方案标记（切点越界/已截断），"
+        "越界部分无数据、不外推；两方案的越界提示分别保留。"
+    )
+    if cmp.get("basis_mismatch"):
+        lines.append(
+            "- ⚠️ 两份方案保存时选择的产率口径不同，体积列与质量列仍各自按同基准相减，"
+            "请勿把一方的体积%与另一方的质量%直接比较。"
+        )
+    for n in cmp.get("notes", []):
+        lines.append(f"- 备注：{n}")
+    lines.append("")
+
+    lines.append("## 2. 逐馏分：切点与产率差值（受影响馏分以 ★ 标出）")
+    lines.append(
+        "| 状态 | 馏分 | A 区间 ℃ | B 区间 ℃ | 切点变化(初/终) ℃ | "
+        "A 体积% | B 体积% | Δ体积% | A 质量% | B 质量% | Δ质量% | A 标记 | B 标记 |"
+    )
+    lines.append(
+        "|---|------|---------|---------|------------------|"
+        "-------:|-------:|------:|-------:|-------:|------:|------|------|"
+    )
+    status_zh = {"matched": "配对", "only_a": "仅A", "only_b": "仅B"}
+    for r in cmp["cuts"]:
+        star = "★ " if r.get("affected") else ""
+        a, b = r.get("a"), r.get("b")
+
+        def iv(side):
+            if not side:
+                return "（无此馏分）"
+            return f"{side['start_temp_c']:g}~{side['end_temp_c']:g}"
+
+        change = ""
+        if r["pair_status"] == "matched":
+            ds, de = r.get("start_temp_delta_c"), r.get("end_temp_delta_c")
+            if (ds is not None and abs(ds) > 1e-6) or (de is not None and abs(de) > 1e-6):
+                change = f"初 {_cmp_temp_delta(ds)} / 终 {_cmp_temp_delta(de)}"
+            else:
+                change = "切点相同"
+        lines.append(
+            f"| {status_zh[r['pair_status']]} | {star}{r['name']} | {iv(a)} | {iv(b)} | {change} | "
+            f"{_cfmt(None if not a else a['volume_yield_pct'])} | "
+            f"{_cfmt(None if not b else b['volume_yield_pct'])} | "
+            f"{_cmp_delta(r.get('volume_yield_delta_pct'))} | "
+            f"{_cfmt(None if not a else a['mass_yield_pct'])} | "
+            f"{_cfmt(None if not b else b['mass_yield_pct'])} | "
+            f"{_cmp_delta(r.get('mass_yield_delta_pct'))} | "
+            f"{_cmp_flags(a['flags']) if a else ''} | {_cmp_flags(b['flags']) if b else ''} |"
+        )
+    lines.append("")
+    if cmp.get("affected_cut_names"):
+        lines.append(
+            "受影响馏分：" + "、".join(cmp["affected_cut_names"])
+            + "（含切点改变，或与其他馏分的重叠/缺口相邻关系发生变化）"
+        )
+        lines.append("")
+
+    lines.append("## 3. 总量与未回收量并排（体积基准，进料=100%）")
+    lines.append("| 项目 | 方案A 体积% | 方案B 体积% | Δ（B−A） |")
+    lines.append("|------|----------:|----------:|--------:|")
+    for row in cmp["totals"]["volume"]:
+        prefix = "（输入项）" if row.get("is_input") else ""
+        lines.append(
+            f"| {prefix}{row['label']} | {_cfmt(row['a_pct'], 4)} | "
+            f"{_cfmt(row['b_pct'], 4)} | {_cmp_delta(row['delta_b_minus_a_pct'], 4)} |"
+        )
+    lines.append("")
+
+    mass_rows = cmp["totals"].get("mass") or []
+    mass_meta = cmp["totals"].get("mass_meta")
+    if mass_rows:
+        lines.append("## 4. 总量并排（质量基准，进料=100%）")
+        lines.append("| 项目 | 方案A 质量% | 方案B 质量% | Δ（B−A） |")
+        lines.append("|------|----------:|----------:|--------:|")
+        for row in mass_rows:
+            prefix = "（输入项）" if row.get("is_input") else ""
+            lines.append(
+                f"| {prefix}{row['label']} | {_cfmt(row['a_pct'], 4)} | "
+                f"{_cfmt(row['b_pct'], 4)} | {_cmp_delta(row['delta_b_minus_a_pct'], 4)} |"
+            )
+        if mass_meta and mass_meta.get("note"):
+            lines.append("")
+            lines.append(f"质量基准说明：{mass_meta['note']}")
+        lines.append("")
+    else:
+        lines.append(
+            f"## 4. 质量基准总量：不可用——{(mass_meta or {}).get('note', '质量数据不完整')}"
+        )
+        lines.append("")
+
+    lines.append("## 5. 重叠 / 缺口并排")
+    ov_a, ov_b = cmp["overlaps"]["a"], cmp["overlaps"]["b"]
+    lines.append(f"- 重叠：方案A {len(ov_a)} 处；方案B {len(ov_b)} 处。")
+    for tag, ovs in (("A", ov_a), ("B", ov_b)):
+        for o in ovs:
+            scope = ("部分在实测范围外" if o.get("partial_outside_range")
+                     else "完全在实测范围外" if o.get("fully_outside_range") else "范围内")
+            lines.append(
+                f"  - [{tag}] {o['cut_a_name']} × {o['cut_b_name']}："
+                f"{o['from_temp_c']:g}~{o['to_temp_c']:g} ℃"
+                f"（宽 {o['width_c']:g} ℃，{_cfmt(o.get('volume_pct'))} 体积%，"
+                f"{_cfmt(o.get('mass_pct'))} 质量%，{scope}）"
+            )
+    kind_zh = {"front": "前缺口", "inter": "中间缺口", "tail": "尾缺口"}
+    gp_a, gp_b = cmp["gaps"]["a"], cmp["gaps"]["b"]
+    lines.append(f"- 缺口：方案A {len(gp_a)} 段；方案B {len(gp_b)} 段。")
+    for tag, gps in (("A", gp_a), ("B", gp_b)):
+        for g in gps:
+            scope = ("范围外（无数据）" if g.get("fully_outside_range")
+                     else "部分越界" if g.get("partial_outside_range") else "范围内")
+            where = " → ".join(
+                x for x in (g.get("after_cut"), g.get("before_cut")) if x
+            ) or "—"
+            lines.append(
+                f"  - [{tag}] {kind_zh[g['kind']]}（{where}）："
+                f"{g['from_temp_c']:g}~{g['to_temp_c']:g} ℃"
+                f"（宽 {g['width_c']:g} ℃，{_cfmt(g.get('volume_pct'))} 体积%，"
+                f"{_cfmt(g.get('mass_pct'))} 质量%，{scope}）"
+            )
+    lines.append("")
+
+    lines.append("## 6. 数据与切点提示（双方各自保留，并排）")
+    for tag, side in (("A", pa), ("B", pb)):
+        issues = cmp["issues"][{"A": "a", "B": "b"}[tag]]
+        cnt = cmp["issues"][{"A": "a_counts", "B": "b_counts"}[tag]]
+        lines.append(
+            f"### 方案{tag}「{side['name']}」"
+            f"（错误 {cnt['error']}、需核实 {cnt['warning']}、提示 {cnt['info']}）"
+        )
+        if not issues:
+            lines.append("- ✅ 无提示。")
+        for it in issues:
+            icon = {"error": "❌", "warning": "⚠️", "info": "ℹ️"}.get(it["severity"], "•")
+            lines.append(f"- {icon} [{it['code']}] {it['message']}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append(
+        "> 本对比仅基于同一次离线蒸馏试验的两份已保存方案（含保存时结果快照），"
+        "用于教学讲解切点调整对产率、重叠、缺口与未回收量的影响；"
+        "不同试验、不同计量基准的数字未直接相减。温度范围外不外推。"
+    )
+    return "\n".join(lines)
+
+
+def comparison_to_json(exp: dict, cmp: dict) -> str:
+    payload = {
+        "exported_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "scope_notice": (
+            "同一离线试验下两份已保存方案的对比；差值为方案B−方案A，"
+            "体积/质量各自同基准相减，不跨试验、不跨计量基准；"
+            "适用温度范围外不外推。"
+        ),
+        "experiment": {
+            "id": exp.get("id"),
+            "name": exp.get("name"),
+            "sample_id": exp.get("sample_id"),
+        },
+        "comparison": cmp,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)

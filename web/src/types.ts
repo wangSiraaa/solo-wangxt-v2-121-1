@@ -147,3 +147,91 @@ export interface CurveSample {
   issues: Issue[];
   has_blocking_errors: boolean;
 }
+
+// ---- 两方案对比（同一试验）----
+export interface ComparisonCutRow {
+  pair_id: string;
+  name: string;
+  pair_status: "matched" | "only_a" | "only_b";
+  a_index: number | null;
+  b_index: number | null;
+  a: CutResultLite | null;
+  b: CutResultLite | null;
+  start_temp_delta_c: number | null;
+  end_temp_delta_c: number | null;
+  endpoints_changed: boolean;
+  volume_yield_a_pct: number | null;
+  volume_yield_b_pct: number | null;
+  volume_yield_delta_pct: number | null;
+  mass_yield_a_pct: number | null;
+  mass_yield_b_pct: number | null;
+  mass_yield_delta_pct: number | null;
+  affected: boolean;
+  affected_reason: string;
+}
+
+export interface CutResultLite {
+  index: number;
+  name: string;
+  start_temp_c: number;
+  end_temp_c: number;
+  flags: string[];
+  volume_yield_pct: number | null;
+  mass_yield_pct: number | null;
+}
+
+export interface ComparisonTotalRow {
+  key: string;
+  label: string;
+  is_input: boolean;
+  a_pct: number | null;
+  b_pct: number | null;
+  delta_b_minus_a_pct: number | null;
+}
+
+export interface ComparisonPlanHeader {
+  id: number;
+  name: string;
+  basis: "volume" | "mass";
+  loss_pct: number;
+  cuts: CutInput[];
+  snapshot_recomputed: boolean;
+  has_blocking_errors: boolean;
+}
+
+export interface PlanComparison {
+  comparison_rule: {
+    same_experiment_only: boolean;
+    delta_convention: string;
+    no_cross_basis_subtraction: boolean;
+    source: string;
+  };
+  experiment: { id: number; name: string; sample_id?: string | null };
+  plans: { a: ComparisonPlanHeader; b: ComparisonPlanHeader };
+  basis_mismatch: boolean;
+  applicable_range: EvalResult["applicable_range"];
+  cuts: ComparisonCutRow[];
+  mass_cut_deltas_available: boolean;
+  totals: {
+    volume: ComparisonTotalRow[];
+    mass: ComparisonTotalRow[];
+    mass_meta: { available: boolean; note: string | null } | null;
+  };
+  overlaps: { a: Overlap[]; b: Overlap[] };
+  gaps: { a: Gap[]; b: Gap[] };
+  issues: {
+    a: Issue[];
+    b: Issue[];
+    a_counts: Record<"error" | "warning" | "info", number>;
+    b_counts: Record<"error" | "warning" | "info", number>;
+    a_has_blocking_errors: boolean;
+    b_has_blocking_errors: boolean;
+  };
+  affected_cut_names: string[];
+  summary: {
+    cuts_a: number; cuts_b: number;
+    overlaps_a: number; overlaps_b: number;
+    gaps_a: number; gaps_b: number;
+  };
+  notes: string[];
+}

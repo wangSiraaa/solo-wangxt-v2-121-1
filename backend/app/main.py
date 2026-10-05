@@ -12,6 +12,8 @@ POST /api/experiments/{id}/evaluate                 仅计算，不落库
 POST /api/experiments/{id}/plans                    保存方案
 GET  /api/plans/{id}                                读方案（重新计算）
 GET  /api/plans/{id}/export?format=markdown|json    导出
+GET  /api/experiments/{id}/plans/compare?a=&b=      同试验两份已保存方案对比
+GET  /api/plans/compare/{a_id}/{b_id}/export        对比摘要导出（markdown|json）
 
 仅处理库中给定的离线试验数据，不连接任何现场装置。
 """
@@ -28,10 +30,16 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from .config import settings
+from .comparison import build_comparison
 from .curve import prepare_curve
 from .database import get_session, init_db
 from .density import prepare_density
-from .exporters import build_markdown, to_json
+from .exporters import (
+    build_comparison_markdown,
+    build_markdown,
+    comparison_to_json,
+    to_json,
+)
 from .models import Experiment, Plan
 from .planning import evaluate_plan
 from .schemas import ExperimentIn, ExperimentOut, PlanIn, PlanOut
@@ -220,6 +228,56 @@ async def curve_sample(exp_id: int, n: int = Query(200, ge=10, le=1000)) -> dict
 
 
 # ---- 方案计算 / 保存 ----
+def _plan_header_dict(plan: Plan) -> dict:
+    return {
+        "id": plan.id,
+        "experiment_id": plan.experiment_id,
+        "name": plan.name,
+        "basis": plan.basis,
+        "cuts": plan.cuts,
+        "loss_pct": plan.loss_pct,
+    }
+
+
+def _resolve_snapshot(exp: Experiment, plan: Plan) -> tuple[dict, bool]:
+    """返回（用于对比的结果，是否为重算）。
+
+    优先使用保存时刻的结果快照；快照缺失（旧数据）时按保存切点重算并标记。
+    """
+    if isinstance(plan.result_snapshot, dict) and plan.result_snapshot.get("cuts"):
+        return plan.result_snapshot, False
+    payload = PlanIn(
+        name=plan.name, basis=plan.basis, cuts=plan.cuts, loss_pct=plan.loss_pct
+    )
+    return _eval_experiment(exp, payload), True
+
+
+async def _load_compare_pair(
+    session, plan_a_id: int, plan_b_id: int
+) -> tuple[Experiment, Plan, dict, bool, Plan, dict, bool]:
+    if plan_a_id == plan_b_id:
+        raise HTTPException(400, "请选择两份不同的方案进行对比")
+    plans: dict[int, Plan] = {}
+    for pid in (plan_a_id, plan_b_id):
+        p = await session.scalar(
+            select(Plan).where(Plan.id == pid).options(selectinload(Plan.experiment))
+        )
+        if p is None:
+            raise HTTPException(404, f"方案 #{pid} 不存在")
+        plans[pid] = p
+    pa, pb = plans[plan_a_id], plans[plan_b_id]
+    if pa.experiment_id != pb.experiment_id:
+        raise HTTPException(
+            422,
+            "两份方案不属于同一次试验：曲线/密度/进料基准不同，"
+            "产率数字不能直接相减，请在同一试验下选择方案",
+        )
+    exp = pa.experiment
+    snap_a, rec_a = _resolve_snapshot(exp, pa)
+    snap_b, rec_b = _resolve_snapshot(exp, pb)
+    return exp, pa, snap_a, rec_a, pb, snap_b, rec_b
+
+
 @app.post("/api/experiments/{exp_id}/evaluate")
 async def evaluate(exp_id: int, payload: PlanIn) -> dict:
     async for session in get_session():
@@ -309,5 +367,71 @@ async def export_plan(
             media_type="text/markdown; charset=utf-8",
             headers={
                 "Content-Disposition": 'attachment; filename="distillation_plan.md"'
+            },
+        )
+
+
+# ---- 两方案对比（同一试验）----
+@app.get("/api/experiments/{exp_id}/plans/compare")
+async def compare_plans(
+    exp_id: int, a: int = Query(..., description="方案A（基准方案）ID"),
+    b: int = Query(..., description="方案B（对比方案）ID"),
+) -> dict:
+    async for session in get_session():
+        exp = await session.get(Experiment, exp_id)
+        if exp is None:
+            raise HTTPException(404, "试验不存在")
+        _owner_exp, pa, snap_a, rec_a, pb, snap_b, rec_b = await _load_compare_pair(
+            session, a, b
+        )
+        if pa.experiment_id != exp_id or pb.experiment_id != exp_id:
+            raise HTTPException(422, "所选方案不属于该试验，不能在本试验下对比")
+        return build_comparison(
+            experiment=_exp_to_out(exp),
+            plan_a=_plan_header_dict(pa),
+            snapshot_a=snap_a,
+            plan_b=_plan_header_dict(pb),
+            snapshot_b=snap_b,
+            snapshot_a_recomputed=rec_a,
+            snapshot_b_recomputed=rec_b,
+        )
+
+
+@app.get("/api/plans/compare/{plan_a_id}/{plan_b_id}/export")
+async def export_comparison(
+    plan_a_id: int,
+    plan_b_id: int,
+    format: Literal["markdown", "json"] = "markdown",
+) -> Response:
+    async for session in get_session():
+        exp, pa, snap_a, rec_a, pb, snap_b, rec_b = await _load_compare_pair(
+            session, plan_a_id, plan_b_id
+        )
+        exp_out = _exp_to_out(exp)
+        comparison = build_comparison(
+            experiment=exp_out,
+            plan_a=_plan_header_dict(pa),
+            snapshot_a=snap_a,
+            plan_b=_plan_header_dict(pb),
+            snapshot_b=snap_b,
+            snapshot_a_recomputed=rec_a,
+            snapshot_b_recomputed=rec_b,
+        )
+        if format == "json":
+            return Response(
+                comparison_to_json(exp_out, comparison),
+                media_type="application/json",
+                headers={
+                    "Content-Disposition":
+                        'attachment; filename="plan_comparison.json"'
+                },
+            )
+        md = build_comparison_markdown(exp_out, comparison)
+        return PlainTextResponse(
+            md,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition":
+                    'attachment; filename="plan_comparison.md"'
             },
         )

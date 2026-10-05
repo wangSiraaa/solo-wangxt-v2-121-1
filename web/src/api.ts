@@ -2,6 +2,7 @@ import type {
   CurveSample,
   EvalResult,
   Experiment,
+  PlanComparison,
   PlanInput,
 } from "./types";
 
@@ -42,8 +43,20 @@ export const api = {
     ),
   seed: () =>
     req<{ loaded_experiments: number }>("/api/seed", { method: "POST" }),
+  comparePlans: (expId: number, aId: number, bId: number) =>
+    req<PlanComparison>(
+      `/api/experiments/${expId}/plans/compare?a=${aId}&b=${bId}`
+    ),
 };
 
 export function exportUrl(planId: number, format: "markdown" | "json") {
   return `/api/plans/${planId}/export?format=${format}`;
+}
+
+export function compareExportUrl(
+  aId: number,
+  bId: number,
+  format: "markdown" | "json"
+) {
+  return `/api/plans/compare/${aId}/${bId}/export?format=${format}`;
 }

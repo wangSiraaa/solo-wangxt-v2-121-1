@@ -102,3 +102,97 @@ tr.sum td { background: #f8fafc; font-weight: 600; }
 }
 .banner.error button { border: none; background: none; color: inherit; cursor: pointer; font-size: 16px; }
 .seed-msg { font-size: 13px; color: #166534; }
+
+/* ---- 两方案对比 ---- */
+.compare-section {
+  margin-top: 36px; padding-top: 18px; border-top: 2px dashed #cbd5e1;
+}
+.compare-section.placeholder h2 { color: var(--gray); }
+.compare-section h2 { font-size: 17px; margin: 0 0 6px; }
+.cmp-selector {
+  display: flex; gap: 18px; align-items: flex-end; flex-wrap: wrap;
+  margin: 12px 0; padding: 10px 12px; background: var(--bg-soft);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.cmp-selector label { font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.cmp-selector select { min-width: 300px; padding: 5px 8px; }
+.swatch {
+  display: inline-block; width: 22px; height: 4px; border-radius: 2px;
+  vertical-align: middle; margin-right: 6px;
+}
+.swatch.a { background: #2563eb; }
+.swatch.b { background: #ea580c; }
+.cmp-error { color: #991b1b; font-size: 13px; font-weight: 600; }
+
+.compare .cmp-rule {
+  background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a;
+  border-radius: 8px; padding: 10px 14px; font-size: 13px; margin: 12px 0;
+}
+.compare .cmp-warn {
+  margin-top: 8px; background: #fffbeb; border: 1px solid #fde68a;
+  color: #92400e; border-radius: 6px; padding: 6px 10px;
+}
+.compare .cmp-info {
+  margin-top: 8px; background: #f8fafc; border: 1px solid var(--border);
+  color: #475569; border-radius: 6px; padding: 6px 10px;
+}
+
+.cmp-table-wrap { overflow-x: auto; }
+.cmp-cut-table { font-size: 12.5px; min-width: 980px; }
+.cmp-cut-table th, .cmp-cut-table td { white-space: nowrap; }
+.cmp-cut-table td.name { font-weight: 600; white-space: normal; min-width: 90px; }
+.cmp-cut-table td.change { font-variant-numeric: tabular-nums; }
+.cmp-cut-table td.delta { font-variant-numeric: tabular-nums; font-weight: 600; }
+.cmp-cut-table td.reason { font-size: 12px; color: #475569; white-space: normal; min-width: 160px; }
+.cmp-cut-table td.reason .flags { margin-top: 3px; }
+.cmp-cut-table tr.affected { background: #fef9c3; }
+.cmp-cut-table tr.affected td:first-child { box-shadow: inset 3px 0 0 #ca8a04; }
+.cmp-cut-table tr.unpaired { background: #f8fafc; color: var(--gray); }
+.cmp-cut-table .star { color: #ca8a04; margin-right: 3px; }
+.delta .pos { color: #15803d; }
+.delta .neg { color: #b91c1c; }
+.delta .zero { color: var(--gray); font-weight: 400; }
+
+.cmp-totals-grid, .cmp-side-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+@media (max-width: 860px) {
+  .cmp-totals-grid, .cmp-side-grid { grid-template-columns: 1fr; }
+}
+.basis-h, .cmp-side-grid h4 { margin: 8px 0; font-size: 13.5px; }
+h4.side-a { color: #1d4ed8; }
+h4.side-b { color: #c2410c; }
+.cmp-total-table { font-size: 12.5px; }
+.cmp-total-table td.delta { font-variant-numeric: tabular-nums; }
+.cmp-total-table tr.input-row td { color: var(--gray); background: #f8fafc; }
+.input-tag {
+  display: inline-block; font-size: 10.5px; background: #e2e8f0; color: #475569;
+  border-radius: 8px; padding: 0 6px; margin-right: 6px;
+}
+
+.cmp-rel { list-style: none; margin: 4px 0 10px; padding: 0; font-size: 12.5px; }
+.cmp-rel li {
+  padding: 4px 8px; border-left: 3px solid; margin-bottom: 3px;
+  border-radius: 0 4px 4px 0; background: #f8fafc;
+}
+.cmp-rel li.bad { border-color: #dc2626; background: #fef2f2; }
+.cmp-rel li.warn { border-color: #d97706; background: #fffbeb; }
+.cmp-rel li.muted { border-color: #cbd5e1; color: var(--gray); }
+.cmp-side-grid h5 { font-size: 12px; margin: 8px 0 2px; color: #374151; }
+
+.cmp-issue-col h4 { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.cmp-counts { font-size: 11.5px; color: var(--gray); font-weight: 400; }
+.cmp-counts .blocking { color: #991b1b; font-weight: 700; margin-left: 6px; }
+.cmp-issues { list-style: none; margin: 4px 0; padding: 0; font-size: 12.5px; }
+.cmp-issues li {
+  padding: 5px 8px; border-radius: 5px; margin-bottom: 4px;
+  border: 1px solid var(--border); background: #fff;
+}
+.cmp-issues li.sev-error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.cmp-issues li.sev-warning { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.cmp-issues li.sev-info { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
+.cmp-issues .tag {
+  font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700;
+  background: rgba(0, 0, 0, 0.06); border-radius: 4px; padding: 0 5px;
+}
+.chart-legend { pointer-events: none; }
